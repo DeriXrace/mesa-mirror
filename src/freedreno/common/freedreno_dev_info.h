@@ -470,6 +470,8 @@ struct fd_dev_info {
 
       /* Whether the device supports the image processing opcode */
       bool has_image_processing;
+      /* If GMEM needs to be disabled for this GPU */
+      bool disable_gmem;
    } props;
 };
 
