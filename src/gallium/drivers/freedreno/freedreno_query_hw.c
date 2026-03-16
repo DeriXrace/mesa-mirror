@@ -20,6 +20,38 @@ struct fd_hw_sample_period {
    struct list_head list;
 };
 
+static struct fd_hw_sample_period *
+alloc_period(struct fd_batch *batch, struct fd_hw_query *hq)
+{
+   if (!list_is_empty(&hq->free_periods)) {
+      struct fd_hw_sample_period *period =
+         list_first_entry(&hq->free_periods, struct fd_hw_sample_period, list);
+      list_delinit(&period->list);
+      return period;
+   }
+
+   return slab_alloc_st(&batch->ctx->sample_period_pool);
+}
+
+static void
+free_period(struct fd_context *ctx, struct fd_hw_query *hq,
+            struct fd_hw_sample_period *period)
+{
+   fd_hw_sample_reference(ctx, &period->start, NULL);
+   fd_hw_sample_reference(ctx, &period->end, NULL);
+   list_add(&period->list, &hq->free_periods);
+}
+
+static void
+destroy_free_periods(struct fd_context *ctx, struct fd_hw_query *hq)
+{
+   struct fd_hw_sample_period *period, *s;
+   LIST_FOR_EACH_ENTRY_SAFE (period, s, &hq->free_periods, list) {
+      list_del(&period->list);
+      slab_free_st(&ctx->sample_period_pool, period);
+   }
+}
+
 static struct fd_hw_sample *
 get_sample(struct fd_batch *batch, struct fd_ringbuffer *ring,
            unsigned query_type) assert_dt
@@ -69,7 +101,7 @@ resume_query(struct fd_batch *batch, struct fd_hw_query *hq,
    assert(!hq->period);
    batch->query_providers_used |= (1 << idx);
    batch->query_providers_active |= (1 << idx);
-   hq->period = slab_alloc_st(&batch->ctx->sample_period_pool);
+   hq->period = alloc_period(batch, hq);
    list_inithead(&hq->period->list);
    hq->period->start = get_sample(batch, ring, hq->base.type);
    /* NOTE: slab_alloc_st() does not zero out the buffer: */
@@ -96,10 +128,8 @@ destroy_periods(struct fd_context *ctx, struct fd_hw_query *hq)
 {
    struct fd_hw_sample_period *period, *s;
    LIST_FOR_EACH_ENTRY_SAFE (period, s, &hq->periods, list) {
-      fd_hw_sample_reference(ctx, &period->start, NULL);
-      fd_hw_sample_reference(ctx, &period->end, NULL);
       list_del(&period->list);
-      slab_free_st(&ctx->sample_period_pool, period);
+      free_period(ctx, hq, period);
    }
 }
 
@@ -111,6 +141,7 @@ fd_hw_destroy_query(struct fd_context *ctx, struct fd_query *q)
    DBG("%p", q);
 
    destroy_periods(ctx, hq);
+   destroy_free_periods(ctx, hq);
    list_del(&hq->list);
 
    free(hq);
@@ -256,6 +287,7 @@ fd_hw_create_query(struct fd_context *ctx, unsigned query_type, unsigned index)
    hq->provider = ctx->hw_sample_providers[idx];
 
    list_inithead(&hq->periods);
+   list_inithead(&hq->free_periods);
    list_inithead(&hq->list);
 
    q = &hq->base;
