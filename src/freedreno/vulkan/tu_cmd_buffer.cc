@@ -6005,6 +6005,12 @@ tu_render_pass_state_merge(struct tu_render_pass_state *dst,
    dst->drawcall_count += src->drawcall_count;
    dst->drawcall_bandwidth_per_sample_sum +=
       src->drawcall_bandwidth_per_sample_sum;
+
+   dst->lrz_enable_count += src->lrz_enable_count;
+   dst->lrz_reject_count += src->lrz_reject_count;
+   dst->lrz_invalidate_count += src->lrz_invalidate_count;
+   dst->lrz_fast_clear_count += src->lrz_fast_clear_count;
+   dst->lrz_fallback_count += src->lrz_fallback_count;
    if (!dst->lrz_disable_reason && src->lrz_disable_reason) {
       dst->lrz_disable_reason = src->lrz_disable_reason;
       dst->lrz_disabled_at_draw =

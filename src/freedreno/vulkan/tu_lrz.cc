@@ -9,6 +9,7 @@
 #include "tu_cmd_buffer.h"
 #include "tu_cs.h"
 #include "tu_image.h"
+#include "tu_a8xx_policy.h"
 
 #include "common/freedreno_gpu_event.h"
 #include "common/freedreno_lrz.h"
@@ -82,6 +83,26 @@
  * so if LRZ data is needed afterwards - there is no need to flush it
  * before using LRZ.
  */
+
+
+static inline void
+tu_lrz_log_pass_counters(struct tu_cmd_buffer *cmd)
+{
+   if (!(cmd->state.rp.lrz_enable_count |
+         cmd->state.rp.lrz_reject_count |
+         cmd->state.rp.lrz_invalidate_count |
+         cmd->state.rp.lrz_fast_clear_count |
+         cmd->state.rp.lrz_fallback_count))
+      return;
+
+   perf_debug(cmd->device,
+              "LRZ stats: enable=%u reject=%u invalidate=%u fast_clear=%u fallback=%u",
+              cmd->state.rp.lrz_enable_count,
+              cmd->state.rp.lrz_reject_count,
+              cmd->state.rp.lrz_invalidate_count,
+              cmd->state.rp.lrz_fast_clear_count,
+              cmd->state.rp.lrz_fallback_count);
+}
 
 static inline void
 tu_lrz_disable_reason(struct tu_cmd_buffer *cmd, const char *reason) {
@@ -364,6 +385,11 @@ tu_lrz_begin_renderpass(struct tu_cmd_buffer *cmd)
    cmd->state.rp.lrz_disabled_at_draw = 0;
    cmd->state.rp.lrz_write_disable_reason = NULL;
    cmd->state.rp.lrz_write_disabled_at_draw = 0;
+   cmd->state.rp.lrz_enable_count = 0;
+   cmd->state.rp.lrz_reject_count = 0;
+   cmd->state.rp.lrz_invalidate_count = 0;
+   cmd->state.rp.lrz_fast_clear_count = 0;
+   cmd->state.rp.lrz_fallback_count = 0;
 
    int lrz_img_count = 0;
    for (unsigned i = 0; i < pass->attachment_count; i++) {
@@ -810,6 +836,8 @@ tu_lrz_tiling_end(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
    } else {
       tu_emit_event_write<CHIP>(cmd, cs, FD_LRZ_FLUSH);
    }
+
+   tu_lrz_log_pass_counters(cmd);
 }
 TU_GENX(tu_lrz_tiling_end);
 
@@ -1149,6 +1177,13 @@ tu6_calculate_lrz_state(struct tu_cmd_buffer *cmd,
       if (cmd->state.lrz.prev_direction != TU_LRZ_UNKNOWN || !cmd->state.lrz.gpu_dir_tracking) {
          perf_debug(cmd->device, "Skipping LRZ due to FS");
          temporary_disable_lrz = true;
+      } else if (tu_a8xx_relaxed_fs_lrz_disable(
+                    cmd->device->physical_device->info)) {
+         /*
+          * On A8xx, direction tracking lets us skip LRZ for this draw without
+          * permanently invalidating the render-pass LRZ state.
+          */
+         temporary_disable_lrz = true;
       } else {
          tu_lrz_disable_reason(cmd, "FS writes depth or has side-effects (TODO: fix for gpu-direction-tracking case)");
          disable_lrz = true;
@@ -1321,18 +1356,29 @@ tu6_calculate_lrz_state(struct tu_cmd_buffer *cmd,
       tu_lrz_disable_write_for_rp(cmd, "stencil write based on depth test");
    }
 
-   if (disable_lrz)
+   if (disable_lrz) {
+      if (cmd->state.lrz.valid)
+         cmd->state.rp.lrz_invalidate_count++;
       cmd->state.lrz.valid = false;
+   }
 
    if (cmd->state.lrz.disable_write_for_rp)
       gras_lrz_cntl.lrz_write = false;
 
-   if (temporary_disable_lrz)
+   if (temporary_disable_lrz) {
+      cmd->state.rp.lrz_fallback_count++;
       gras_lrz_cntl.enable = false;
+   }
 
    cmd->state.lrz.enabled = cmd->state.lrz.valid && gras_lrz_cntl.enable;
-   if (!cmd->state.lrz.enabled)
+   if (!cmd->state.lrz.enabled) {
+      cmd->state.rp.lrz_reject_count++;
       memset(&gras_lrz_cntl, 0, sizeof(gras_lrz_cntl));
+   } else {
+      cmd->state.rp.lrz_enable_count++;
+      if (gras_lrz_cntl.fc_enable)
+         cmd->state.rp.lrz_fast_clear_count++;
+   }
 
    if (cmd->state.lrz.enabled && gras_lrz_cntl.lrz_write &&
        cmd->state.lrz.prev_direction != TU_LRZ_UNKNOWN) {
