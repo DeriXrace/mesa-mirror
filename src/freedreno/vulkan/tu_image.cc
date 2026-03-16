@@ -657,12 +657,12 @@ TU_GENX(tu_image_update_layout);
 
 
 static bool
-format_list_ubwc_possible(const struct tu_device *dev,
+format_list_ubwc_possible(struct tu_device *dev,
                           const VkImageFormatListCreateInfo *fmt_list,
                           const VkImageCreateInfo *create_info);
 
 static bool
-tu_mutable_ubwc_allowed(const struct tu_device *device,
+tu_mutable_ubwc_allowed(struct tu_device *device,
                         const VkImageFormatListCreateInfo *fmt_list,
                         const VkImageCreateInfo *pCreateInfo)
 {
@@ -1658,4 +1658,3 @@ tu_bind_sparse_image(struct tu_device *device, void *submit,
                          prev_bo_offset, bind_range);
    }
 }
-
