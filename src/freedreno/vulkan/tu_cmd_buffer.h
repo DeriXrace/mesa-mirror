@@ -343,6 +343,12 @@ struct tu_render_pass_state
     */
    uint32_t drawcall_bandwidth_per_sample_sum;
 
+   uint32_t lrz_enable_count;
+   uint32_t lrz_reject_count;
+   uint32_t lrz_invalidate_count;
+   uint32_t lrz_fast_clear_count;
+   uint32_t lrz_fallback_count;
+
    const char *lrz_disable_reason;
    uint32_t lrz_disabled_at_draw;
    const char *lrz_write_disable_reason;
