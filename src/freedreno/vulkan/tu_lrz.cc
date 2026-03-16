@@ -88,6 +88,13 @@
 static inline void
 tu_lrz_log_pass_counters(struct tu_cmd_buffer *cmd)
 {
+   if (!(cmd->state.rp.lrz_enable_count |
+         cmd->state.rp.lrz_reject_count |
+         cmd->state.rp.lrz_invalidate_count |
+         cmd->state.rp.lrz_fast_clear_count |
+         cmd->state.rp.lrz_fallback_count))
+      return;
+
    perf_debug(cmd->device,
               "LRZ stats: enable=%u reject=%u invalidate=%u fast_clear=%u fallback=%u",
               cmd->state.rp.lrz_enable_count,
