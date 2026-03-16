@@ -50,6 +50,17 @@ enum tu_cs_mode
    TU_CS_MODE_SUB_STREAM,
 };
 
+enum tu_cs_init_entry
+{
+   TU_CS_INIT_CMD,
+   TU_CS_INIT_DRAW,
+   TU_CS_INIT_TILE_STORE,
+   TU_CS_INIT_DRAW_EPILOGUE,
+   TU_CS_INIT_SUB_STREAM,
+   TU_CS_INIT_PRECHAIN_DRAW,
+   TU_CS_INIT_PRECHAIN_DRAW_EPILOGUE,
+};
+
 struct tu_cs_entry
 {
    /* No ownership */
@@ -131,6 +142,9 @@ tu_cs_init(struct tu_cs *cs,
            struct tu_device *device,
            enum tu_cs_mode mode,
            uint32_t initial_size, const char *name);
+
+uint32_t
+tu_cs_policy_initial_size(struct tu_device *device, enum tu_cs_init_entry entry);
 
 void
 tu_cs_init_external(struct tu_cs *cs, struct tu_device *device,

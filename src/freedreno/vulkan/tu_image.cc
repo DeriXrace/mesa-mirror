@@ -33,6 +33,35 @@
 #include "tu_subsampled_image.h"
 #include "tu_wsi.h"
 
+enum tu_ubwc_disable_reason {
+   TU_UBWC_DISABLE_INCOMPATIBLE,
+   TU_UBWC_DISABLE_MUTABLE,
+   TU_UBWC_DISABLE_MUTABLE_LINEAR,
+   TU_UBWC_DISABLE_DEBUG,
+   TU_UBWC_DISABLE_REASON_COUNT,
+};
+
+static uint32_t tu_ubwc_disable_reason_counts[TU_UBWC_DISABLE_REASON_COUNT];
+
+static void
+tu_ubwc_disable(struct tu_image *image,
+                enum tu_ubwc_disable_reason reason)
+{
+   if (image->ubwc_enabled)
+      p_atomic_inc(&tu_ubwc_disable_reason_counts[reason]);
+
+   image->ubwc_enabled = false;
+
+   if (TU_DEBUG(PERF)) {
+      mesa_logd("UBWC disable reason[%u] counts: incompatible=%u mutable=%u mutable_linear=%u debug=%u",
+                reason,
+                p_atomic_read(&tu_ubwc_disable_reason_counts[TU_UBWC_DISABLE_INCOMPATIBLE]),
+                p_atomic_read(&tu_ubwc_disable_reason_counts[TU_UBWC_DISABLE_MUTABLE]),
+                p_atomic_read(&tu_ubwc_disable_reason_counts[TU_UBWC_DISABLE_MUTABLE_LINEAR]),
+                p_atomic_read(&tu_ubwc_disable_reason_counts[TU_UBWC_DISABLE_DEBUG]));
+   }
+}
+
 uint32_t
 tu6_plane_count(VkFormat format)
 {
@@ -672,6 +701,10 @@ tu_mutable_ubwc_allowed(struct tu_device *device,
    if (!tu_a8xx_mutable_ubwc_policy(device->physical_device->info))
       return true;
 
+   if (!tu_a8xx_mutable_ubwc_requires_format_list_check(
+          device->physical_device->info))
+      return true;
+
    /*
     * On A8xx we keep the image compressed only if all advertised view formats
     * are actually UBWC-capable, which avoids runtime UBWC fallback/decompress
@@ -759,7 +792,7 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
                       image->vk.stencil_usage,
                       device->physical_device->info, pCreateInfo->samples,
                       pCreateInfo->mipLevels, device->use_z24uint_s8uint))
-      image->ubwc_enabled = false;
+      tu_ubwc_disable(image, TU_UBWC_DISABLE_INCOMPATIBLE);
 
    /* Mutable images can be reinterpreted as any other compatible format.
     * This is a problem with UBWC (compression for different formats is different),
@@ -792,7 +825,7 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
                   util_format_name(vk_format_to_pipe_format(image->vk.format)),
                   fmt_list ? "present" : "missing");
             }
-            image->ubwc_enabled = false;
+            tu_ubwc_disable(image, TU_UBWC_DISABLE_MUTABLE_LINEAR);
             image->force_linear_tile = true;
          } else if (!tu_mutable_ubwc_allowed(device, fmt_list, pCreateInfo)) {
             if (image->ubwc_enabled) {
@@ -814,14 +847,14 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
                      util_format_name(vk_format_to_pipe_format(image->vk.format)),
                      fmt_list ? "present" : "missing");
                }
-               image->ubwc_enabled = false;
+               tu_ubwc_disable(image, TU_UBWC_DISABLE_MUTABLE);
             }
 
             bool r8g8_r16 = format_list_reinterprets_r8g8_r16(vk_format_to_pipe_format(image->vk.format), fmt_list);
             bool fmt_list_has_swaps = format_list_has_swaps(fmt_list);
 
             if (r8g8_r16 || fmt_list_has_swaps) {
-               image->ubwc_enabled = false;
+               tu_ubwc_disable(image, TU_UBWC_DISABLE_MUTABLE_LINEAR);
                image->force_linear_tile = true;
             }
          } else {
@@ -848,7 +881,7 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
    }
 
    if (TU_DEBUG(NOUBWC)) {
-      image->ubwc_enabled = false;
+      tu_ubwc_disable(image, TU_UBWC_DISABLE_DEBUG);
    }
 
    return VK_SUCCESS;

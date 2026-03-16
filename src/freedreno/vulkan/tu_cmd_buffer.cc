@@ -15,6 +15,7 @@
 #include "vk_util.h"
 
 #include "tu_buffer.h"
+#include "tu_a8xx_policy.h"
 #include "tu_clear_blit.h"
 #include "tu_cs.h"
 #include "tu_event.h"
@@ -268,7 +269,7 @@ static void
 tu_set_render_mode(struct tu_cs *cs, tu_set_render_mode args)
 {
    tu_cs_emit_pkt7(cs, CP_SET_MARKER, 1);
-   if (CHIP >= A8XX) {
+   if (tu_a8xx_cp_set_marker_uses_gmem_bit(cs->device->physical_device->info)) {
       tu_cs_emit(cs, A8XX_CP_SET_MARKER_0_MODE(args.mode) |
                      COND(args.uses_gmem, A8XX_CP_SET_MARKER_0_USES_GMEM));
    } else {
@@ -4019,13 +4020,25 @@ tu_create_cmd_buffer(struct vk_command_pool *pool,
       }
    }
 
-   tu_cs_init(&cmd_buffer->cs, device, TU_CS_MODE_GROW, 4096, "cmd cs");
-   tu_cs_init(&cmd_buffer->draw_cs, device, TU_CS_MODE_GROW, 4096, "draw cs");
-   tu_cs_init(&cmd_buffer->tile_store_cs, device, TU_CS_MODE_GROW, 2048, "tile store cs");
-   tu_cs_init(&cmd_buffer->draw_epilogue_cs, device, TU_CS_MODE_GROW, 4096, "draw epilogue cs");
-   tu_cs_init(&cmd_buffer->sub_cs, device, TU_CS_MODE_SUB_STREAM, 2048, "draw sub cs");
-   tu_cs_init(&cmd_buffer->pre_chain.draw_cs, device, TU_CS_MODE_GROW, 4096, "prechain draw cs");
-   tu_cs_init(&cmd_buffer->pre_chain.draw_epilogue_cs, device, TU_CS_MODE_GROW, 4096, "prechain draw epiligoue cs");
+   tu_cs_init(&cmd_buffer->cs, device, TU_CS_MODE_GROW,
+              tu_cs_policy_initial_size(device, TU_CS_INIT_CMD), "cmd cs");
+   tu_cs_init(&cmd_buffer->draw_cs, device, TU_CS_MODE_GROW,
+              tu_cs_policy_initial_size(device, TU_CS_INIT_DRAW), "draw cs");
+   tu_cs_init(&cmd_buffer->tile_store_cs, device, TU_CS_MODE_GROW,
+              tu_cs_policy_initial_size(device, TU_CS_INIT_TILE_STORE),
+              "tile store cs");
+   tu_cs_init(&cmd_buffer->draw_epilogue_cs, device, TU_CS_MODE_GROW,
+              tu_cs_policy_initial_size(device, TU_CS_INIT_DRAW_EPILOGUE),
+              "draw epilogue cs");
+   tu_cs_init(&cmd_buffer->sub_cs, device, TU_CS_MODE_SUB_STREAM,
+              tu_cs_policy_initial_size(device, TU_CS_INIT_SUB_STREAM),
+              "draw sub cs");
+   tu_cs_init(&cmd_buffer->pre_chain.draw_cs, device, TU_CS_MODE_GROW,
+              tu_cs_policy_initial_size(device, TU_CS_INIT_PRECHAIN_DRAW),
+              "prechain draw cs");
+   tu_cs_init(&cmd_buffer->pre_chain.draw_epilogue_cs, device, TU_CS_MODE_GROW,
+              tu_cs_policy_initial_size(device, TU_CS_INIT_PRECHAIN_DRAW_EPILOGUE),
+              "prechain draw epiligoue cs");
 
    for (unsigned i = 0; i < MAX_BIND_POINTS; i++)
       cmd_buffer->descriptors[i].push_set.base.type = VK_OBJECT_TYPE_DESCRIPTOR_SET;

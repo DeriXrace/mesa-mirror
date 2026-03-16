@@ -8,9 +8,11 @@
 
 #include "util/format/u_format.h"
 #include "util/u_atomic.h"
+#include "util/hash_table.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
 #include "util/u_string.h"
+#include <string.h>
 
 #include "drm/freedreno_drmif.h"
 
@@ -27,6 +29,18 @@
 #include "isa/isa.h"
 
 #include "disasm.h"
+
+static uint32_t
+ir3_shader_key_hash(const void *key)
+{
+   return _mesa_hash_data(key, sizeof(struct ir3_shader_key));
+}
+
+static bool
+ir3_shader_key_equal_ht(const void *a, const void *b)
+{
+   return memcmp(a, b, sizeof(struct ir3_shader_key)) == 0;
+}
 
 bool
 ir3_const_ensure_imm_size(struct ir3_shader_variant *v, unsigned size)
@@ -658,6 +672,12 @@ ir3_shader_create_variant(struct ir3_shader *shader,
 static inline struct ir3_shader_variant *
 shader_variant(struct ir3_shader *shader, const struct ir3_shader_key *key)
 {
+   if (shader->variant_ht) {
+      struct hash_entry *entry = _mesa_hash_table_search(shader->variant_ht, key);
+      if (entry)
+         return (struct ir3_shader_variant *) entry->data;
+   }
+
    struct ir3_shader_variant *v;
 
    for (v = shader->variants; v; v = v->next)
@@ -665,6 +685,20 @@ shader_variant(struct ir3_shader *shader, const struct ir3_shader_key *key)
          return v;
 
    return NULL;
+}
+
+static void
+shader_variant_add(struct ir3_shader *shader, struct ir3_shader_variant *v)
+{
+   v->next = shader->variants;
+   shader->variants = v;
+
+   if (shader->variant_ht) {
+      struct ir3_shader_key *lookup_key =
+         ralloc_memdup(shader, &v->key, sizeof(v->key));
+      if (lookup_key)
+         _mesa_hash_table_insert(shader->variant_ht, lookup_key, v);
+   }
 }
 
 struct ir3_shader_variant *
@@ -682,8 +716,7 @@ ir3_shader_get_variant(struct ir3_shader *shader, const struct ir3_shader_key *k
       /* compile new variant if it doesn't exist already: */
       v = create_variant(shader, key, write_disasm, shader);
       if (v) {
-         v->next = shader->variants;
-         shader->variants = v;
+         shader_variant_add(shader, v);
          if (upload) {
             upload(v, arg);
             if (v->binning)
@@ -759,6 +792,7 @@ ir3_shader_destroy(struct ir3_shader *shader)
       }
    }
    ralloc_free(shader->nir);
+   _mesa_hash_table_destroy(shader->variant_ht, NULL);
    mtx_destroy(&shader->variants_lock);
    ralloc_free(shader);
 }
@@ -963,6 +997,10 @@ ir3_shader_from_nir(struct ir3_compiler *compiler, nir_shader *nir,
    translate_xfb_info(nir, &shader->stream_output);
    shader->options = *options;
    shader->nir = nir;
+
+   shader->variant_ht =
+      _mesa_hash_table_create(shader, ir3_shader_key_hash,
+                              ir3_shader_key_equal_ht);
 
    ir3_disk_cache_init_shader_key(compiler, shader);
 

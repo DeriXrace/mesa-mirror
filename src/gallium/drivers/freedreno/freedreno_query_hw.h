@@ -100,6 +100,9 @@ struct fd_hw_query {
    /* list of fd_hw_sample_periods: */
    struct list_head periods;
 
+   /* free-list for reusing sample period objects across begin/end cycles */
+   struct list_head free_periods;
+
    /* if active and not paused, the current sample period (not
     * yet added to current_periods):
     */
