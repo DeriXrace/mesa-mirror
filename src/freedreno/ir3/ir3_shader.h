@@ -21,6 +21,8 @@
 
 BEGINC;
 
+struct hash_table;
+
 #define dword_offsetof(type, name) DIV_ROUND_UP(offsetof(type, name), 4)
 #define dword_sizeof(type)         DIV_ROUND_UP(sizeof(type), 4)
 
@@ -1045,6 +1047,7 @@ struct ir3_shader {
    };
 
    struct ir3_shader_variant *variants;
+   struct hash_table *variant_ht;
    mtx_t variants_lock;
 
    cache_key cache_key; /* shader disk-cache key */

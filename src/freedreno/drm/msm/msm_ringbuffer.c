@@ -22,6 +22,21 @@
 
 #define INIT_SIZE 0x1000
 
+static uint32_t
+msm_ring_policy_initial_size(struct fd_submit *submit,
+                             enum fd_ringbuffer_flags flags)
+{
+   const bool gen8_plus = fd_dev_gen(&submit->pipe->dev_id) >= 8;
+
+   if (flags & FD_RINGBUFFER_STREAMING)
+      return gen8_plus ? 0x10000 : 0x8000;
+
+   if (flags & FD_RINGBUFFER_GROWABLE)
+      return gen8_plus ? 0x2000 : INIT_SIZE;
+
+   return gen8_plus ? 0x2000 : INIT_SIZE;
+}
+
 struct msm_submit {
    struct fd_submit base;
 
@@ -180,8 +195,9 @@ msm_submit_suballoc_ring_bo(struct fd_submit *submit,
    }
 
    if (!suballoc_bo) {
-      // TODO possibly larger size for streaming bo?
-      msm_ring->ring_bo = fd_bo_new_ring(submit->pipe->dev, 0x8000);
+      uint32_t alloc_size = MAX2(size, msm_ring_policy_initial_size(
+                                      submit, FD_RINGBUFFER_STREAMING));
+      msm_ring->ring_bo = fd_bo_new_ring(submit->pipe->dev, alloc_size);
       msm_ring->offset = 0;
    } else {
       msm_ring->ring_bo = fd_bo_ref(suballoc_bo);
@@ -216,7 +232,7 @@ msm_submit_new_ringbuffer(struct fd_submit *submit, uint32_t size,
       msm_submit_suballoc_ring_bo(submit, msm_ring, size);
    } else {
       if (flags & FD_RINGBUFFER_GROWABLE)
-         size = INIT_SIZE;
+         size = msm_ring_policy_initial_size(submit, flags);
 
       msm_ring->offset = 0;
       msm_ring->ring_bo = fd_bo_new_ring(submit->pipe->dev, size);
