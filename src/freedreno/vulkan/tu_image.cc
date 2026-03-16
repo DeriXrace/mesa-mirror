@@ -717,7 +717,7 @@ tu_mutable_ubwc_allowed(struct tu_device *device,
 /* Return true if all formats in the format list can support UBWC.
  */
 static bool
-format_list_ubwc_possible(const struct tu_device *dev,
+format_list_ubwc_possible(struct tu_device *dev,
                           const VkImageFormatListCreateInfo *fmt_list,
                           const VkImageCreateInfo *create_info)
 {
