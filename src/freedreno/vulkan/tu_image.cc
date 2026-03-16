@@ -22,6 +22,7 @@
 
 #include "fdl/freedreno_layout.h"
 
+#include "tu_a8xx_policy.h"
 #include "tu_buffer.h"
 #include "tu_cs.h"
 #include "tu_descriptor_set.h"
@@ -654,6 +655,32 @@ tu_image_update_layout(struct tu_device *device, struct tu_image *image,
 }
 TU_GENX(tu_image_update_layout);
 
+
+static bool
+format_list_ubwc_possible(struct tu_device *dev,
+                          const VkImageFormatListCreateInfo *fmt_list,
+                          const VkImageCreateInfo *create_info);
+
+static bool
+tu_mutable_ubwc_allowed(struct tu_device *device,
+                        const VkImageFormatListCreateInfo *fmt_list,
+                        const VkImageCreateInfo *pCreateInfo)
+{
+   if (!device->physical_device->info->props.ubwc_all_formats_compatible)
+      return false;
+
+   if (!tu_a8xx_mutable_ubwc_policy(device->physical_device->info))
+      return true;
+
+   /*
+    * On A8xx we keep the image compressed only if all advertised view formats
+    * are actually UBWC-capable, which avoids runtime UBWC fallback/decompress
+    * transitions for mutable views.
+    */
+   return format_list_ubwc_possible(device, fmt_list,
+                                    pCreateInfo);
+}
+
 /* Return true if all formats in the format list can support UBWC.
  */
 static bool
@@ -751,8 +778,6 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
          vk_find_struct_const(pCreateInfo->pNext, IMAGE_FORMAT_LIST_CREATE_INFO);
       if (!tu6_mutable_format_list_ubwc_compatible(device->physical_device->info,
                                                    fmt_list)) {
-         bool mutable_ubwc_fc = device->physical_device->info->props.ubwc_all_formats_compatible;
-
          /* NV12 uses a special compression scheme for the Y channel which
           * doesn't support reinterpretation. We have to fall back to linear
           * always.
@@ -769,7 +794,7 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
             }
             image->ubwc_enabled = false;
             image->force_linear_tile = true;
-         } else if (!mutable_ubwc_fc) {
+         } else if (!tu_mutable_ubwc_allowed(device, fmt_list, pCreateInfo)) {
             if (image->ubwc_enabled) {
                if (fmt_list && fmt_list->viewFormatCount == 2) {
                   perf_debug(
@@ -801,8 +826,6 @@ tu_image_init(struct tu_device *device, struct tu_image *image,
             }
          } else {
             image->is_mutable = true;
-            if (!format_list_ubwc_possible(device, fmt_list, pCreateInfo))
-               image->ubwc_enabled = false;
          }
 
          /* If the threshold of the linear mipmap fallback for compressed
@@ -1635,4 +1658,3 @@ tu_bind_sparse_image(struct tu_device *device, void *submit,
                          prev_bo_offset, bind_range);
    }
 }
-
