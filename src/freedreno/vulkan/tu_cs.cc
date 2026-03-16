@@ -37,6 +37,27 @@ tu_cs_init(struct tu_cs *cs,
    cs->name = name;
 }
 
+uint32_t
+tu_cs_policy_initial_size(struct tu_device *device, enum tu_cs_init_entry entry)
+{
+   const bool gen8_plus = device->physical_device->info->chip >= A8XX;
+
+   switch (entry) {
+   case TU_CS_INIT_TILE_STORE:
+      return gen8_plus ? 4096 : 2048;
+   case TU_CS_INIT_SUB_STREAM:
+      return gen8_plus ? 4096 : 2048;
+   case TU_CS_INIT_PRECHAIN_DRAW:
+   case TU_CS_INIT_PRECHAIN_DRAW_EPILOGUE:
+      return gen8_plus ? 8192 : 4096;
+   case TU_CS_INIT_CMD:
+   case TU_CS_INIT_DRAW:
+   case TU_CS_INIT_DRAW_EPILOGUE:
+   default:
+      return gen8_plus ? 8192 : 4096;
+   }
+}
+
 /**
  * Initialize a command stream as a wrapper to an external buffer.
  */

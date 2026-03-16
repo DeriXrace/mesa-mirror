@@ -39,12 +39,38 @@ alloc_ring(struct fd_batch *batch, unsigned sz, enum fd_ringbuffer_flags flags)
    return fd_submit_new_ringbuffer(batch->submit, sz, flags);
 }
 
+enum fd_batch_ring_type {
+   FD_BATCH_RING_DRAW,
+   FD_BATCH_RING_GMEM,
+   FD_BATCH_RING_BINNING,
+   FD_BATCH_RING_NONDRAW_GMEM,
+   FD_BATCH_RING_PROLOGUE,
+};
+
+static unsigned
+fd_batch_ring_seed_size(const struct fd_batch *batch, enum fd_batch_ring_type type)
+{
+   const bool gen8_plus = batch->ctx->screen->gen >= 8;
+
+   switch (type) {
+   case FD_BATCH_RING_NONDRAW_GMEM:
+   case FD_BATCH_RING_PROLOGUE:
+      return 0x1000;
+   case FD_BATCH_RING_DRAW:
+   case FD_BATCH_RING_GMEM:
+   case FD_BATCH_RING_BINNING:
+      return gen8_plus ? 0x200000 : 0x100000;
+   default:
+      return 0x100000;
+   }
+}
+
 static struct fd_batch_subpass *
 subpass_create(struct fd_batch *batch)
 {
    struct fd_batch_subpass *subpass = CALLOC_STRUCT(fd_batch_subpass);
 
-   subpass->draw = alloc_ring(batch, 0x100000, 0);
+   subpass->draw = alloc_ring(batch, fd_batch_ring_seed_size(batch, FD_BATCH_RING_DRAW), 0);
 
    /* Replace batch->draw with reference to current subpass, for
     * backwards compat with code that is not subpass aware.
@@ -91,13 +117,19 @@ fd_batch_create(struct fd_context *ctx, bool nondraw)
 
    batch->submit = fd_submit_new(ctx->pipe);
    if (batch->nondraw) {
-      batch->gmem = alloc_ring(batch, 0x1000, FD_RINGBUFFER_PRIMARY);
+      batch->gmem = alloc_ring(batch,
+                               fd_batch_ring_seed_size(batch, FD_BATCH_RING_NONDRAW_GMEM),
+                               FD_RINGBUFFER_PRIMARY);
    } else {
-      batch->gmem = alloc_ring(batch, 0x100000, FD_RINGBUFFER_PRIMARY);
+      batch->gmem = alloc_ring(batch,
+                               fd_batch_ring_seed_size(batch, FD_BATCH_RING_GMEM),
+                               FD_RINGBUFFER_PRIMARY);
 
       /* a6xx+ re-uses draw rb for both draw and binning pass: */
       if (ctx->screen->gen < 6) {
-         batch->binning = alloc_ring(batch, 0x100000, 0);
+         batch->binning = alloc_ring(batch,
+                                     fd_batch_ring_seed_size(batch, FD_BATCH_RING_BINNING),
+                                     0);
       }
    }
 
@@ -334,7 +366,9 @@ struct fd_ringbuffer *
 fd_batch_get_prologue(struct fd_batch *batch)
 {
    if (!batch->prologue)
-      batch->prologue = alloc_ring(batch, 0x1000, 0);
+      batch->prologue = alloc_ring(batch,
+                                   fd_batch_ring_seed_size(batch, FD_BATCH_RING_PROLOGUE),
+                                   0);
    return batch->prologue;
 }
 

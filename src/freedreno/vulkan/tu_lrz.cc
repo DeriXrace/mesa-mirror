@@ -143,7 +143,7 @@ tu6_emit_lrz_buffer(struct tu_cs *cs, struct tu_image *depth_image)
          crb.add(GRAS_LRZ_CB_CNTL(CHIP));
       }
 
-      if (CHIP >= A8XX) {
+      if (tu_a8xx_lrz_has_slice_pitch(cs->device->physical_device->info)) {
          crb.add(GRAS_LRZ_BUFFER_SLICE_PITCH(CHIP));
       }
 
@@ -169,7 +169,7 @@ tu6_emit_lrz_buffer(struct tu_cs *cs, struct tu_image *depth_image)
                                    depth_image->lrz_layout.lrz_buffer_size));
    }
 
-   if (CHIP >= A8XX) {
+   if (tu_a8xx_lrz_has_slice_pitch(cs->device->physical_device->info)) {
       crb.add(GRAS_LRZ_BUFFER_SLICE_PITCH(CHIP,
          depth_image->lrz_layout.lrz_slice_pitch
       ));
