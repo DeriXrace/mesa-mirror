@@ -104,8 +104,54 @@ tu_lrz_log_pass_counters(struct tu_cmd_buffer *cmd)
               cmd->state.rp.lrz_fallback_count);
 }
 
+enum tu_lrz_disable_category {
+   TU_LRZ_DISABLE_BY_STATE,
+   TU_LRZ_DISABLE_BY_LAYOUT,
+   TU_LRZ_DISABLE_BY_HAZARD,
+   TU_LRZ_DISABLE_BY_A8XX_POLICY,
+   TU_LRZ_DISABLE_CATEGORY_COUNT,
+};
+
+static uint32_t tu_lrz_disable_reason_counts[TU_LRZ_DISABLE_CATEGORY_COUNT];
+
+static enum tu_lrz_disable_category
+tu_lrz_categorize_disable_reason(const char *reason)
+{
+   if (strstr(reason, "different depth attachments"))
+      return TU_LRZ_DISABLE_BY_LAYOUT;
+
+   if (strstr(reason, "secondary cmdbuf") ||
+       strstr(reason, "renderpass suspend") ||
+       strstr(reason, "Stencil may kill") ||
+       strstr(reason, "stencil write"))
+      return TU_LRZ_DISABLE_BY_HAZARD;
+
+   if (strstr(reason, "gpu-direction-tracking"))
+      return TU_LRZ_DISABLE_BY_A8XX_POLICY;
+
+   return TU_LRZ_DISABLE_BY_STATE;
+}
+
+static void
+tu_lrz_record_disable_reason(struct tu_cmd_buffer *cmd, const char *reason)
+{
+   enum tu_lrz_disable_category category =
+      tu_lrz_categorize_disable_reason(reason);
+   p_atomic_inc(&tu_lrz_disable_reason_counts[category]);
+
+   if (TU_DEBUG(PERF)) {
+      mesa_logd("LRZ disable reason[%u] counts: state=%u layout=%u hazard=%u a8xx=%u",
+                category,
+                p_atomic_read(&tu_lrz_disable_reason_counts[TU_LRZ_DISABLE_BY_STATE]),
+                p_atomic_read(&tu_lrz_disable_reason_counts[TU_LRZ_DISABLE_BY_LAYOUT]),
+                p_atomic_read(&tu_lrz_disable_reason_counts[TU_LRZ_DISABLE_BY_HAZARD]),
+                p_atomic_read(&tu_lrz_disable_reason_counts[TU_LRZ_DISABLE_BY_A8XX_POLICY]));
+   }
+}
+
 static inline void
 tu_lrz_disable_reason(struct tu_cmd_buffer *cmd, const char *reason) {
+   tu_lrz_record_disable_reason(cmd, reason);
    cmd->state.rp.lrz_disable_reason = reason;
    cmd->state.rp.lrz_disabled_at_draw = cmd->state.rp.drawcall_count;
    perf_debug(cmd->device, "Disabling LRZ because '%s' at draw %u", reason,
@@ -118,6 +164,7 @@ tu_lrz_disable_write_for_rp(struct tu_cmd_buffer *cmd, const char *reason)
    if (cmd->state.lrz.disable_write_for_rp)
       return;
 
+   tu_lrz_record_disable_reason(cmd, reason);
    cmd->state.lrz.disable_write_for_rp = true;
    cmd->state.rp.lrz_write_disabled_at_draw = cmd->state.rp.drawcall_count;
    cmd->state.rp.lrz_write_disable_reason = reason;
@@ -245,7 +292,7 @@ tu_lrz_init_state(struct tu_cmd_buffer *cmd,
    bool clears_depth = att->clear_mask &
       (VK_IMAGE_ASPECT_COLOR_BIT | VK_IMAGE_ASPECT_DEPTH_BIT);
    bool has_gpu_tracking =
-      cmd->device->physical_device->info->props.has_lrz_dir_tracking;
+      tu_lrz_dir_tracking_supported(cmd->device->physical_device->info);
 
    if (!has_gpu_tracking && !clears_depth)
       return;
@@ -297,7 +344,7 @@ tu_lrz_init_secondary(struct tu_cmd_buffer *cmd,
                       const struct tu_render_pass_attachment *att)
 {
    bool has_gpu_tracking =
-      cmd->device->physical_device->info->props.has_lrz_dir_tracking;
+      tu_lrz_dir_tracking_supported(cmd->device->physical_device->info);
 
    if (!has_gpu_tracking)
       return;
@@ -397,7 +444,7 @@ tu_lrz_begin_renderpass(struct tu_cmd_buffer *cmd)
          lrz_img_count++;
    }
 
-   if (cmd->device->physical_device->info->props.has_lrz_dir_tracking &&
+   if (tu_lrz_dir_tracking_supported(cmd->device->physical_device->info) &&
        cmd->state.pass->subpass_count > 1 && lrz_img_count > 1) {
       /* Theoretically we could switch between LRZ buffers during the binning
        * and tiling passes, but it is untested and would add complexity for
@@ -859,7 +906,7 @@ tu_lrz_sysmem_begin(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
 
    struct tu_lrz_state *lrz = &cmd->state.lrz;
 
-   if (cmd->device->physical_device->info->props.has_lrz_dir_tracking) {
+   if (tu_lrz_dir_tracking_supported(cmd->device->physical_device->info)) {
       tu_disable_lrz<CHIP>(cmd, cs, lrz->image_view->image);
       /* Make sure depth view comparison will fail. */
       tu6_write_lrz_reg(cmd, cs,
@@ -905,7 +952,7 @@ void
 tu_disable_lrz(struct tu_cmd_buffer *cmd, struct tu_cs *cs,
                struct tu_image *image)
 {
-   if (!cmd->device->physical_device->info->props.has_lrz_dir_tracking)
+   if (!tu_lrz_dir_tracking_supported(cmd->device->physical_device->info))
       return;
 
    if (!image->lrz_layout.lrz_total_size)
@@ -969,7 +1016,7 @@ tu_lrz_clear_depth_image(struct tu_cmd_buffer *cmd,
                          const VkImageSubresourceRange *pRanges)
 {
    if (!rangeCount || !image->lrz_layout.lrz_total_size ||
-       !cmd->device->physical_device->info->props.has_lrz_dir_tracking)
+       !tu_lrz_dir_tracking_supported(cmd->device->physical_device->info))
       return;
 
    /* We cannot predict which depth subresource would be used later on,
