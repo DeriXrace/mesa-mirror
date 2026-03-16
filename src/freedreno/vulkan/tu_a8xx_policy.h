@@ -26,4 +26,16 @@ tu_a8xx_mutable_ubwc_policy(const struct fd_dev_info *info)
    return info->chip >= 8;
 }
 
+static inline bool
+tu_a8xx_lrz_has_slice_pitch(const struct fd_dev_info *info)
+{
+   return info->chip >= 8;
+}
+
+static inline bool
+tu_a8xx_cp_set_marker_uses_gmem_bit(const struct fd_dev_info *info)
+{
+   return info->chip >= 8;
+}
+
 #endif /* TU_A8XX_POLICY_H */
