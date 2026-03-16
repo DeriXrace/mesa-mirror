@@ -37,7 +37,7 @@ ir3_shader_key_hash(const void *key)
 }
 
 static bool
-ir3_shader_key_equal(const void *a, const void *b)
+ir3_shader_key_equal_ht(const void *a, const void *b)
 {
    return memcmp(a, b, sizeof(struct ir3_shader_key)) == 0;
 }
@@ -999,7 +999,8 @@ ir3_shader_from_nir(struct ir3_compiler *compiler, nir_shader *nir,
    shader->nir = nir;
 
    shader->variant_ht =
-      _mesa_hash_table_create(shader, ir3_shader_key_hash, ir3_shader_key_equal);
+      _mesa_hash_table_create(shader, ir3_shader_key_hash,
+                              ir3_shader_key_equal_ht);
 
    ir3_disk_cache_init_shader_key(compiler, shader);
 
