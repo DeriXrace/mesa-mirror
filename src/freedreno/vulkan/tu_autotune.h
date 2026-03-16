@@ -84,6 +84,8 @@ struct tu_autotune {
 
    uint32_t stat_sysmem_select_count;
    uint32_t stat_gmem_select_count;
+   uint32_t stat_forced_sysmem_count;
+   uint32_t stat_forced_gmem_count;
    uint32_t stat_mode_switch_count;
    uint32_t stat_switch_suppressed_count;
    uint32_t stat_min_history_bias_count;

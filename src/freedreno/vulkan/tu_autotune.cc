@@ -485,7 +485,9 @@ void
 tu_autotune_fini(struct tu_autotune *at, struct tu_device *dev)
 {
    if (TU_AUTOTUNE_DEBUG_LOG) {
-      mesa_logi("autotune stats: sysmem=%u gmem=%u switches=%u suppressed=%u min_history_bias=%u",
+      mesa_logi("autotune stats: forced_sysmem=%u forced_gmem=%u sysmem=%u gmem=%u switches=%u suppressed=%u min_history_bias=%u",
+                p_atomic_read(&at->stat_forced_sysmem_count),
+                p_atomic_read(&at->stat_forced_gmem_count),
                 p_atomic_read(&at->stat_sysmem_select_count),
                 p_atomic_read(&at->stat_gmem_select_count),
                 p_atomic_read(&at->stat_mode_switch_count),
@@ -617,6 +619,18 @@ tu_autotune_use_bypass(struct tu_autotune *at,
    const struct tu_render_pass *pass = cmd_buffer->state.pass;
    const struct tu_framebuffer *framebuffer = cmd_buffer->state.framebuffer;
 
+   if (TU_DEBUG(SYSMEM)) {
+      p_atomic_inc(&at->stat_forced_sysmem_count);
+      p_atomic_inc(&at->stat_sysmem_select_count);
+      return true;
+   }
+
+   if (TU_DEBUG(GMEM)) {
+      p_atomic_inc(&at->stat_forced_gmem_count);
+      p_atomic_inc(&at->stat_gmem_select_count);
+      return false;
+   }
+
    /* If a feedback loop in the subpass caused one of the pipelines used to set
     * SINGLE_PRIM_MODE(FLUSH_PER_OVERLAP_AND_OVERWRITE) or even
     * SINGLE_PRIM_MODE(FLUSH), then that should cause significantly increased
@@ -663,6 +677,23 @@ tu_autotune_use_bypass(struct tu_autotune *at,
 
    struct tu_autotune_history_snapshot history = {};
    if (get_history(at, renderpass_key, &history)) {
+      /* Startup/low-history stabilization path: avoid re-evaluating GMEM
+       * unless enough samples exist. Prefer deterministic sysmem on A8xx.
+       */
+      if (history.num_results < TU_AUTOTUNE_MIN_HISTORY_FOR_GMEM) {
+         bool select_sysmem = true;
+
+         if (history.has_last_use_bypass)
+            select_sysmem = history.last_use_bypass;
+
+         if (select_sysmem) {
+            p_atomic_inc(&at->stat_min_history_bias_count);
+            p_atomic_inc(&at->stat_sysmem_select_count);
+            set_history_last_use_bypass(at, renderpass_key, true);
+            return true;
+         }
+      }
+
       const uint32_t pass_pixel_count =
          get_render_pass_pixel_count(cmd_buffer);
       uint64_t sysmem_bandwidth =
@@ -683,11 +714,6 @@ tu_autotune_use_bypass(struct tu_autotune *at,
       gmem_bandwidth = (gmem_bandwidth * 11 + total_draw_call_bandwidth) / 10;
 
       bool select_sysmem = sysmem_bandwidth <= gmem_bandwidth;
-
-      if (history.num_results < TU_AUTOTUNE_MIN_HISTORY_FOR_GMEM && !select_sysmem) {
-         select_sysmem = true;
-         p_atomic_inc(&at->stat_min_history_bias_count);
-      }
 
       if (history.has_last_use_bypass &&
           history.num_results < TU_AUTOTUNE_MIN_HISTORY_FOR_SWITCH) {
